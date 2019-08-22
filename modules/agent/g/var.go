@@ -183,6 +183,7 @@ func SetReportProcs(procs map[string]map[int]string) {
 
 var (
 	ips     []string
+	ipNets  []*net.IPNet
 	ipsLock = new(sync.Mutex)
 )
 
@@ -196,7 +197,18 @@ func SetTrustableIps(ipStr string) {
 	arr := strings.Split(ipStr, ",")
 	ipsLock.Lock()
 	defer ipsLock.Unlock()
-	ips = arr
+	for _, v := range arr {
+		if strings.Index(v, "/") >= 0 {
+			_, in, err := net.ParseCIDR(v)
+			if err != nil {
+				log.Printf("TrustableIps is error[%s]:%v", v, err)
+			} else {
+				ipNets = append(ipNets, in)
+			}
+		} else {
+			ips = append(ips, v)
+		}
+	}
 }
 
 func IsTrustable(remoteAddr string) bool {
@@ -210,5 +222,16 @@ func IsTrustable(remoteAddr string) bool {
 		return true
 	}
 
-	return slice.ContainsString(TrustableIps(), ip)
+	if ips != nil && slice.ContainsString(TrustableIps(), ip) {
+		return true
+	}
+	if ipNets != nil {
+		nip := net.ParseIP(ip)
+		for _, v := range ipNets {
+			if v.Contains(nip) {
+				return true
+			}
+		}
+	}
+	return false
 }

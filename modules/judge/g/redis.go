@@ -16,6 +16,7 @@ package g
 
 import (
 	"log"
+	"strconv"
 	"strings"
 	"time"
 
@@ -29,7 +30,7 @@ func InitRedisConnPool() {
 		return
 	}
 
-	auth, dsn := formatRedisAddr(Config().Alarm.Redis.Dsn)
+	auth, dsn, db := formatRedisAddr(Config().Alarm.Redis.Dsn)
 	maxIdle := Config().Alarm.Redis.MaxIdle
 	idleTimeout := 240 * time.Second
 
@@ -41,15 +42,21 @@ func InitRedisConnPool() {
 		MaxIdle:     maxIdle,
 		IdleTimeout: idleTimeout,
 		Dial: func() (redis.Conn, error) {
-			c, err := redis.DialTimeout("tcp", dsn, connTimeout, readTimeout, writeTimeout)
+			var opts []redis.DialOption
+			if auth != "" {
+				opts = append(opts, redis.DialPassword(auth))
+			}
+			if db != "" {
+				if dbValue, err := strconv.ParseInt(db, 10, 32); err == nil {
+					opts = append(opts, redis.DialDatabase(int(dbValue)))
+				}
+			}
+			opts = append(opts, redis.DialConnectTimeout(connTimeout))
+			opts = append(opts, redis.DialReadTimeout(readTimeout))
+			opts = append(opts, redis.DialWriteTimeout(writeTimeout))
+			c, err := redis.Dial("tcp", dsn, opts...)
 			if err != nil {
 				return nil, err
-			}
-			if auth != "" {
-				if _, err := c.Do("AUTH", auth); err != nil {
-					_ = c.Close()
-					return nil, err
-				}
 			}
 			return c, err
 		},
@@ -57,12 +64,20 @@ func InitRedisConnPool() {
 	}
 }
 
-func formatRedisAddr(addrConfig string) (string, string) {
-	if redisAddr := strings.Split(addrConfig, "@"); len(redisAddr) == 1 {
-		return "", redisAddr[0]
-	} else {
-		return strings.Join(redisAddr[0:len(redisAddr)-1], "@"), redisAddr[len(redisAddr)-1]
+func formatRedisAddr(addrConfig string) (string, string, string) {
+	redisAddr := strings.Split(addrConfig, "@")
+	auth := ""
+	host := redisAddr[len(redisAddr)-1]
+	db := ""
+	if len(redisAddr) > 1 {
+		auth = strings.Join(redisAddr[0:len(redisAddr)-1], "@")
 	}
+	redisAddr = strings.Split(host, "/")
+	if len(redisAddr) > 1 {
+		host = redisAddr[0]
+		db = redisAddr[1]
+	}
+	return auth, host, db
 }
 
 func PingRedis(c redis.Conn, t time.Time) error {
